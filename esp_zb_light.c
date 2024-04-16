@@ -49,12 +49,18 @@
 
 bool connected = false;
 
-static const char *TAG = "ESP_ZB_ON_OFF_LIGHT";
+static const char *TAG = "ESP_ZB_GASMETER";
 /********************* Define functions **************************/
 static void bdb_start_top_level_commissioning_cb(uint8_t mode_mask)
 {
-    ESP_ERROR_CHECK(esp_zb_bdb_start_top_level_commissioning(mode_mask));
+    ESP_LOGI(TAG, "Starting top-level commissioning with mode mask: %d", mode_mask);
+    esp_err_t ret = esp_zb_bdb_start_top_level_commissioning(mode_mask);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start top-level commissioning: %s", esp_err_to_name(ret));
+    }
+    ESP_ERROR_CHECK(ret);
 }
+
 
 void reportAttribute(uint16_t clusterID, uint16_t attributeID, void *value)
 {
@@ -92,12 +98,15 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
         esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_INITIALIZATION);
         break;
     case ESP_ZB_BDB_SIGNAL_DEVICE_FIRST_START:
+        ESP_LOGI(TAG, "Device first start");
     case ESP_ZB_BDB_SIGNAL_DEVICE_REBOOT:
         if (err_status == ESP_OK) {
+            ESP_LOGI(TAG, "Device reboot, status OK");
             ESP_LOGI(TAG, "Start network steering");
             esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_NETWORK_STEERING);
         } else {
             /* commissioning failed */
+            ESP_LOGI(TAG, "Device reboot, status FAIL");
             ESP_LOGW(TAG, "Failed to initialize Zigbee stack (status: %s)", esp_err_to_name(err_status));
             esp_zb_scheduler_alarm((esp_zb_callback_t)bdb_start_top_level_commissioning_cb, ESP_ZB_BDB_MODE_INITIALIZATION, 1000);
         }
@@ -212,6 +221,7 @@ static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t callback_id,
 static void esp_zb_task(void *pvParameters)
 {
     /* initialize Zigbee stack */
+    ESP_LOGI(TAG, "Initialising Zigbee stack");
     esp_zb_cfg_t zb_nwk_cfg = ESP_ZB_ZED_CONFIG();
     esp_zb_init(&zb_nwk_cfg);
         // ------------------------------ Cluster BASIC ------------------------------
@@ -222,9 +232,9 @@ static void esp_zb_task(void *pvParameters)
     uint32_t ApplicationVersion = 0x0001;
     uint32_t StackVersion = 0x0001;
     uint32_t HWVersion = 0x0001;
-    uint8_t ManufacturerName[] = {4, 'T', 'e', 's', 't'}; // warning: this is in format {length, 'string'} :
-    uint8_t ModelIdentifier[] = {5, 'a','i','r','_','q'};
-    uint8_t DateCode[] = {8, '2', '0', '2', '4', '0', '3', '2', '3'};
+    uint8_t ManufacturerName[] = {6, 'Z', 'B', 'H', 'o', 'm', 'e'}; // warning: this is in format {length, 'string'} :
+    uint8_t ModelIdentifier[] = {5, 'g','a','s','_','c'};
+    uint8_t DateCode[] = {8, '2', '0', '2', '4', '0', '4', '1', '0'};
     esp_zb_attribute_list_t *esp_zb_basic_cluster = esp_zb_basic_cluster_create(&basic_cluster_cfg);
     esp_zb_basic_cluster_add_attr(esp_zb_basic_cluster, ESP_ZB_ZCL_ATTR_BASIC_APPLICATION_VERSION_ID, &ApplicationVersion);
     esp_zb_basic_cluster_add_attr(esp_zb_basic_cluster, ESP_ZB_ZCL_ATTR_BASIC_STACK_VERSION_ID, &StackVersion);
@@ -239,7 +249,7 @@ static void esp_zb_task(void *pvParameters)
     };
     esp_zb_attribute_list_t *esp_zb_identify_cluster = esp_zb_identify_cluster_create(&identify_cluster_cfg);
     
-    //--------------------------time
+    // ------------------------------ Cluster Time ------------------------------
     esp_zb_time_cluster_cfg_t time_cfg = {
     .time = 0,
     .time_status = 0,
@@ -248,29 +258,30 @@ static void esp_zb_task(void *pvParameters)
     esp_zb_attribute_list_t *esp_zb_time_cluster = esp_zb_time_cluster_create(&time_cfg);
     //esp_zb_time_cluster_add_attr(esp_zb_time_cluster, ESP_ZB_ZCL_ATTR_TIME_TIME_ZONE_ID, &my_val);
 
-    // ------------------------------ Cluster Temperature ------------------------------
-    esp_zb_temperature_meas_cluster_cfg_t temperature_meas_cfg = {
-        .measured_value = 0xFFFF,
-        .min_value = -5000,
-        .max_value = 10000,
+    // ------------------------------ Cluster Metering ------------------------------
+    esp_zb_metering_cluster_cfg_t metering_cfg = {
+        .current_summation_delivered = {.low = 0, .high = 0},
+        .status = 0,
+        .uint_of_measure = ESP_ZB_ZCL_METERING_UNIT_M3_M3H_BINARY,
+        .summation_formatting = 0x02,  // Formatting for one decimal place
+        .metering_device_type = ESP_ZB_ZCL_METERING_GAS_METERING,
     };
-    esp_zb_attribute_list_t *esp_zb_temperature_meas_cluster = esp_zb_temperature_meas_cluster_create(&temperature_meas_cfg);
+    esp_zb_attribute_list_t *esp_zb_metering_meas_cluster = esp_zb_metering_cluster_create(&metering_cfg);
 
-    // ------------------------------ Cluster Humidity ------------------------------
-    esp_zb_humidity_meas_cluster_cfg_t humidity_meas_cfg = {
-        .measured_value = 0xFFFF,
-        .min_value = 0,
-        .max_value = 10000,
+    // ------------------------------ Cluster ON/OFF ------------------------------
+    esp_zb_on_off_cluster_cfg_t on_off_cluster_cfg = {
+        .on_off = 0,
     };
-    esp_zb_attribute_list_t *esp_zb_humidity_meas_cluster = esp_zb_humidity_meas_cluster_create(&humidity_meas_cfg);
+    esp_zb_attribute_list_t *esp_zb_on_off_cluster = esp_zb_on_off_cluster_create(&on_off_cluster_cfg);
 
     // ------------------------------ Create cluster list ------------------------------
     esp_zb_cluster_list_t *esp_zb_cluster_list = esp_zb_zcl_cluster_list_create();
     esp_zb_cluster_list_add_basic_cluster(esp_zb_cluster_list, esp_zb_basic_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
     esp_zb_cluster_list_add_identify_cluster(esp_zb_cluster_list, esp_zb_identify_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
     esp_zb_cluster_list_add_time_cluster(esp_zb_cluster_list, esp_zb_time_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
-    esp_zb_cluster_list_add_temperature_meas_cluster(esp_zb_cluster_list, esp_zb_temperature_meas_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
-    esp_zb_cluster_list_add_humidity_meas_cluster(esp_zb_cluster_list, esp_zb_humidity_meas_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
+    esp_zb_cluster_list_add_metering_cluster(esp_zb_cluster_list, esp_zb_metering_meas_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
+    esp_zb_cluster_list_add_on_off_cluster(esp_zb_cluster_list, esp_zb_on_off_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
+    
 
     // ------------------------------ Create endpoint list ------------------------------
     esp_zb_ep_list_t *esp_zb_ep_list = esp_zb_ep_list_create();
@@ -281,8 +292,11 @@ static void esp_zb_task(void *pvParameters)
     esp_zb_core_action_handler_register(zb_action_handler);
     esp_zb_set_primary_network_channel_set(ESP_ZB_PRIMARY_CHANNEL_MASK);
 
+    ESP_LOGI(TAG, "Zigbee stack initial configuration done, starting...");
     ESP_ERROR_CHECK(esp_zb_start(false));
+    ESP_LOGI(TAG, "Zigbee stack started, going into main loop");
     esp_zb_main_loop_iteration();
+    ESP_LOGI(TAG, "Zigbee main loop running");
 }
 
 void setup_zb(void)

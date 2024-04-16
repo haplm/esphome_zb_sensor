@@ -25,37 +25,62 @@ esp32:
 # Enable logging
 logger:
   hardware_uart: UART0
-    
-i2c:
-  sda: 12
-  scl: 22
 
-sensor:
-    # https://esphome.io/components/sensor/aht10.html
-  - platform: aht10
-    variant: AHT10 # AHT20 for AHT20/AHT30 sensors
-    temperature:
-      name: "Living Room Temperature"
-      id: "temp"
-      filters:
-        - delta: 0.1
-      on_value:
-        then:
-          - lambda: |-
-                int16_t value = (int16_t)(x*100);
-                reportAttribute(ESP_ZB_ZCL_CLUSTER_ID_TEMP_MEASUREMENT, ESP_ZB_ZCL_ATTR_TEMP_MEASUREMENT_VALUE_ID, &value);
-    humidity:
-      name: "Living Room Humidity"
-      id: "hum"
-      filters:
-        - delta: 1
-      on_value:
-        then:
-          - lambda: |-
-                int16_t value = (int16_t)(x*100);
-                reportAttribute(ESP_ZB_ZCL_CLUSTER_ID_REL_HUMIDITY_MEASUREMENT, ESP_ZB_ZCL_ATTR_REL_HUMIDITY_MEASUREMENT_VALUE_ID, &value);
-    update_interval: 60s
+globals:
+  - id: z61high
+    type: int16_t
+    restore_value: yes
+    initial_value: "0"
+  - id: z61low
+    type: int32_t
+    restore_value: yes
+    initial_value: "0"
 
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: GPIO12
+      mode: INPUT_PULLUP ## set ESP32 pin to input pull-up mode
+      inverted: true
+    name: Z-61 Pulse Counter
+    id: gassensor_state
+    device_class: window
+    filters:
+      - delayed_off: 10ms
+    ## This automation will be triggered when a button press ends,
+    ## or in other words on the falling edge of the signal.
+    on_release:
+      then:
+        - lambda: |-
+            ESP_LOGI("main", " -------  Z-61 falling edge");
+            
+            // Increment z61low directly
+            id(z61low) += 1;
+            
+            // Check for overflow and increment z61high if necessary
+            if (id(z61low) == 0) {  // Assuming overflow occurs when z61low wraps around to 0
+                id(z61high) += 1;
+            }
+            
+            // Create an esp_zb_uint48_s structure with the updated values
+            // esp_zb_uint48_s currentValue;
+            // currentValue.low = id(z61low);
+            // currentValue.high = id(z61high);
+            // ESP_LOGI("main", "Going to update meter: high = %hu, low = %lu", currentValue.high, currentValue.low);
+            // reportAttribute(ESP_ZB_ZCL_CLUSTER_ID_METERING, ESP_ZB_ZCL_ATTR_METERING_CURRENT_SUMMATION_DELIVERED_ID, &currentValue);
+            // ESP_LOGI("main", "Updated high = %hu, low = %lu", currentValue.high, currentValue.low);
+
+            bool state = false;
+            reportAttribute(ESP_ZB_ZCL_CLUSTER_ID_ON_OFF, ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID, &state);
+            ESP_LOGI("main", "Updated state to OFF");
+
+    on_press:
+      - lambda: |-
+            ESP_LOGI("main", " -------  Z-61 rising edge");
+            bool state = true;
+            reportAttribute(ESP_ZB_ZCL_CLUSTER_ID_ON_OFF, ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID, &state);
+            ESP_LOGI("main", "Updated state to ON");
+            
 custom_component:
 - lambda: |-
     auto my_zb = new esphomeZB();
